@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>이랑T와 함께 반비례 마스터하기</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #ffffff;
+      --ink: #111827;
+      --grid: #e5e7eb;
+      --axis: #111827;
+      --accent: #2563eb;
+      --good: #16a34a;
+      --bad: #ef4444;
+      --warn: #f59e0b;
+      --line: #1d4ed8;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: #f3f4f6;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Apple SD Gothic Neo, Roboto, Helvetica, Arial, "맑은 고딕", "Malgun Gothic";
+    }
+
+    .header { max-width: 1100px; margin: 20px auto 10px; padding: 0 16px; }
+    .title  { font-weight: 800; font-size: clamp(20px, 3.2vw, 36px); letter-spacing: .5px; }
+    .modes  { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .mode-btn {
+      background: #1f2937; color: #e5e7eb; border: 1px solid #374151;
+      padding: 10px 14px; border-radius: 10px; cursor: pointer;
+      transition: transform .05s ease, background .2s ease, border-color .2s ease;
+      font-size: 15px;
+    }
+    .mode-btn:hover { background: #273247; }
+    .mode-btn.active { background: var(--accent); border-color: var(--accent); color: white; }
+
+    /* 캔버스 위 KaTeX 수식 박스 */
+    .eq-formula {
+      position: absolute; pointer-events: none; display: none; z-index: 3;
+    }
+    .eqf-inner {
+      position: absolute; left: 0; top: 0; transform-origin: top left; white-space: nowrap;
+    }
+
+    .wrap {
+      max-width: 1100px;
+      margin: 8px auto 28px; padding: 0 16px;
+      display: grid; grid-template-columns: 1fr minmax(260px, 380px);
+      gap: 16px; align-items: start;
+    }
+
+    .card { background: var(--panel); color: var(--ink); border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.25); padding: 12px; }
+    .canvas-wrap { width: 100%; aspect-ratio: 1 / 1; position: relative; }
+    canvas {
+      width: 100%; height: 100%; display: block;
+      border-radius: 10px; border: 2px solid #d1d5db; background: #fff;
+      touch-action: none;
+    }
+
+    .overlay { position: absolute; inset: 8px; pointer-events: none; display: flex; align-items: start; justify-content: center; }
+    .toast {
+      margin-top: 6px; background: rgba(255,255,255,.96); color: var(--ink);
+      border: 1px solid #e5e7eb; border-radius: 10px; padding: 8px 12px; font-size: 14px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.15); display: none;
+    }
+    .toast.ok { border-color: #bbf7d0; }
+    .toast.bad { border-color: #fecaca; }
+
+    .panel { background: var(--panel); color: var(--ink); border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.25); padding: 16px 16px 18px; }
+    .panel h3 { margin: 2px 0 10px; font-size: 18px; font-weight: 800; }
+
+    .expr-row {
+      display: flex; align-items: center; gap: 10px;
+      border: 2px solid #d1d5db; border-radius: 10px;
+      padding: 12px; background: #fff; font-size: 18px; line-height: 1.2;
+    }
+    .expr-y, .expr-eq { font-weight: 700; letter-spacing: .3px; }
+    .expr-k { flex: 0 0 auto; width: 6ch; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace; text-align: center; border: none; outline: none; font-size: 18px; color: var(--ink); background: transparent; }
+    .expr-x { font-weight: 700; }
+    .hint { margin-top: 8px; font-size: 13px; color: #6b7280; }
+
+    .statbar { display:flex; gap:8px; flex-wrap:wrap; margin: 8px 0 6px; font-size: 14px; color: #374151; }
+    .chip { background:#f3f4f6; border:1px solid #e5e7eb; border-radius:999px; padding:6px 10px; }
+    .chip b{ color:#111827 }
+
+    .controls { display:flex; gap:8px; flex-wrap:wrap; margin-top: 10px; }
+    .btn { border: 1px solid #d1d5db; background:#111827; color:#fff; padding:10px 12px; border-radius:10px; cursor:pointer; font-size:14px; }
+    .btn.ghost { background:#fff; color:#111827; }
+    .btn:disabled { opacity: .4; cursor:not-allowed; }
+
+    .confirm { margin-top:10px; padding:10px; border:1px dashed #d1d5db; border-radius:10px; display:none; }
+    .confirm p { margin: 0 0 8px; font-weight: 700; }
+
+    /* 슬라이더 UI */
+    .slider-box { margin-top: 12px; font-size: 14px; }
+    .slider { width: 100%; }
+
+    @media (max-width: 840px) { .wrap { grid-template-columns: 1fr; } }
+    .katex .katex-mathml{display:none !important;}
+
+    /* === (탐색 모드) 입력 가능한 분수 UI === */
+    .frac-ui{
+      display:inline-flex; flex-direction:column; align-items:center; gap:6px;
+      margin-left: 4px;
+    }
+    .frac-ui .num-input{
+      width: clamp(7ch, 9vw, 10ch);                /* 4자리 + 부호 충분 */
+      height: clamp(36px, 4.5vw, 48px);
+      font-size: clamp(22px, 2.8vw, 30px);
+      text-align: center;
+      color: var(--ink);
+      background: #fff;
+      border: 2px solid #cbd5e1;
+      border-radius: 10px;
+      outline: none;
+      caret-color: #111827;                        /* 커서 색 명확히 */
+    }
+    .frac-ui .bar{
+      width: 100%;
+      height: 3px;                                 /* bar를 더 두껍게 */
+      background: #111827;
+      margin: 2px 0;
+      border-radius: 2px;
+    }
+    .frac-ui .denom{
+      font-size: clamp(18px, 2.2vw, 24px);
+      font-weight: 700;
+      line-height: 1;
+      color: var(--ink);
+    }
+  </style>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+</head>
+<body>
+  <div class="header">
+    <div class="title">이랑T와 함께 반비례 마스터하기</div>
+    <div class="modes" id="modeButtons">
+      <button class="mode-btn active" data-mode="explore">그래프 모양 알아보기</button>
+      <button class="mode-btn" data-mode="eq-to-graph">식을 그래프로 바꾸기</button>
+      <button class="mode-btn" data-mode="graph-to-eq">그래프를 식으로 바꾸기</button>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="card">
+      <div class="canvas-wrap">
+        <canvas id="gameCanvas"></canvas>
+        <div class="overlay"><div id="toast" class="toast"></div></div>
+        <div id="eqFormula" class="eq-formula"><div class="eqf-inner" id="eqFormulaInner"></div></div>
+      </div>
+    </div>
+
+    <div class="panel" id="rightPanel"></div>
+  </div>
+
+  <script>
+  // === 선 굵기 배율 ===
+  function lineScale() {
+    return window.matchMedia && window.matchMedia('(pointer: coarse)').matches ? 2 : 1;
+  }
+
+  // ===== 좌표평면 =====
+  function drawCartesianPlane(canvas) {
+    const ctx = canvas.getContext("2d");
+    const rect = canvas.getBoundingClientRect();
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const size = Math.floor(Math.min(rect.width, rect.height) * dpr);
+    canvas.width = size; canvas.height = size;
+    const origin = size / 2; const range = 10; const cells = range * 2; const step = size / cells;
+
+    ctx.clearRect(0, 0, size, size);
+    ctx.lineWidth = (1.5 / dpr) * lineScale(); ctx.strokeStyle = "#e5e7eb";
+    for (let i = 0; i <= cells; i++) {
+      const pos = Math.round(i * step) + 0.5;
+      ctx.beginPath(); ctx.moveTo(pos, 0); ctx.lineTo(pos, size); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, pos); ctx.lineTo(size, pos); ctx.stroke();
+    }
+
+    ctx.lineWidth = (2 / dpr) * lineScale(); ctx.strokeStyle = "black";
+    ctx.beginPath(); ctx.moveTo(0, origin + 0.5); ctx.lineTo(size, origin + 0.5); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(origin + 0.5, size); ctx.lineTo(origin + 0.5, 0); ctx.stroke();
+
+    ctx.fillStyle = "black";
+    ctx.beginPath(); ctx.moveTo(size - 10 * dpr, origin - 4 * dpr); ctx.lineTo(size, origin); ctx.lineTo(size - 10 * dpr, origin + 4 * dpr); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(origin - 4 * dpr, 10 * dpr); ctx.lineTo(origin, 0); ctx.lineTo(origin + 4 * dpr, 10 * dpr); ctx.closePath(); ctx.fill();
+
+    // 축 라벨
+    ctx.save();
+    ctx.fillStyle = "black";
+    ctx.font = `${14 * dpr}px Arial`;
+    ctx.textAlign = "left"; ctx.textBaseline = "top";
+    ctx.fillText("x", size - 14 * dpr, origin + 8 * dpr);
+    ctx.textAlign = "right"; ctx.textBaseline = "bottom";
+    ctx.fillText("y", origin - 8 * dpr, 14 * dpr);
+    ctx.textAlign = "right"; ctx.textBaseline = "top";
+    ctx.fillText("O", origin - 6 * dpr, origin + 6 * dpr);
+    ctx.restore();
+
+    ctx.save();
+    ctx.font = `${12 * dpr}px Arial`;
+    ctx.fillStyle = "black";
+    ctx.textAlign = "center"; ctx.textBaseline = "top";
+    for (let i = -9; i <= 9; i++) { if (i === 0) continue; const x = origin + i * step; ctx.fillText(String(i), x, origin + 4 * dpr); }
+    ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    for (let i = -9; i <= 9; i++) { if (i === 0) continue; const y = origin - i * step; ctx.fillText(String(i), origin - 4 * dpr, y); }
+    ctx.restore();
+
+    return { ctx, size, origin, step, range, dpr };
+  }
+
+  // ===== y = a/x 그리기 =====
+  function drawHyperbola(canvas, a, base, style = "#1d4ed8") {
+    const { ctx, origin, step, range, dpr } = base;
+    if (!isFinite(a)) return;
+
+    ctx.save();
+    ctx.lineWidth = (3.5 / dpr) * lineScale();
+    ctx.strokeStyle = style;
+
+    if (Math.abs(a) < 1e-12) {  // a=0 → x축
+      const y0 = origin + 0.5;
+      ctx.beginPath(); ctx.moveTo(0, y0); ctx.lineTo(canvas.width, y0); ctx.stroke();
+      ctx.restore(); return;
+    }
+
+    const minAbsX = 0.05;
+    const pxStep = Math.max(1, Math.floor(dpr));
+
+    function drawBranch(xStart, xEnd) {
+      ctx.beginPath();
+      let drawing = false;
+      for (let px = xStart; px <= xEnd; px += pxStep) {
+        const x = (px - origin) / step;
+        if (Math.abs(x) < minAbsX) { drawing = false; continue; }
+        const y = a / x;
+        if (y < -range || y > range) { drawing = false; continue; }
+        const sx = origin + x * step;
+        const sy = origin - y * step;
+        if (!drawing) { ctx.moveTo(sx, sy); drawing = true; } else { ctx.lineTo(sx, sy); }
+      }
+      ctx.stroke();
+    }
+
+    drawBranch(0, origin - minAbsX * step);
+    drawBranch(origin + minAbsX * step, canvas.width);
+
+    ctx.restore();
+  }
+
+  // ===== 유틸: 숫자/분수 파싱 =====
+  function parseK(raw) {
+    if (!raw) return null; const s = String(raw).trim();
+    const frac = /^([+\-])?\s*(\d+)(?:\s*\/\s*(\d+))?\s*$/;
+    const dec  = /^([+\-])?\s*(\d+(?:\.\d+)?)\s*$/;
+    let m = s.match(frac);
+    if (m) {
+      const sign = m[1] === '-' ? -1 : 1;
+      const a = parseInt(m[2],10);
+      const b = m[3]?parseInt(m[3],10):1;
+      if(b===0) return null;
+      return sign*(a/b);
+    }
+    m = s.match(dec);
+    if (m) {
+      const sign = m[1] === '-' ? -1 : 1;
+      const v = parseFloat(m[2]);
+      return sign*v;
+    }
+    return null;
+  }
+
+  // ===== 게임 상태(공용) =====
+  const INV_COEFFS = [4,6,8,9,12,16,-4,-6,-8,-9,-12,-16];
+  const GAME_LEN = 5;
+  const PER_PROBLEM_TIME = 60;
+
+  const GRAPH_COEFFS = INV_COEFFS.slice();
+  const GRAPH_GAME_LEN = 10;
+  const GRAPH_PER_PROBLEM_TIME = 30;
+
+  const CONNECT_MIN_MATCH = 5;  // (요청) 5개 이상
+
+  // ===== LaTeX =====
+  function formatA(a){ return Number.isInteger(a) ? String(a) : a.toFixed(2).replace(/\.?0+$/,''); }
+ function latexForInv(a){
+  const absA = Math.abs(a);
+  const num  = formatA(absA);                 // 8, 4, 3.5 등
+  const frac = `\\frac{${num}}{x}`;           // \frac{8}{x}
+  return a < 0 ? `y = -${frac}` : `y = ${frac}`;
+}
+
+  function renderQuestionInv(){
+    const el = document.getElementById('qMath');
+    if (!el || !window.katex) return;
+    el.innerHTML = '';
+    window.katex.render(latexForInv(state.a), el, {throwOnError:false, displayMode:false, output:'html'});
+  }
+
+  const state = {
+    mode: 'idle',
+    base: null, a: null,
+    problemIndex: 0, score: 0, timeLeft: 0, timerId: null,
+    points: [], curveA: null, curveDrawn: false,
+    flashActive:false, flashIndices:[], flashBlink:false, flashIntervalId:null, flashTimeoutId:null,
+    _pendingNext:false,
+  };
+
+  // ===== 캔버스 유틸 =====
+  const canvas = document.getElementById('gameCanvas');
+  function toCanvasXY(evt) {
+    const rect = canvas.getBoundingClientRect();
+    const x = (evt.clientX - rect.left) * (canvas.width / rect.width);
+    const y = (evt.clientY - rect.top) * (canvas.height / rect.height);
+    return {x,y};
+  }
+  function snapToGrid(px, py) {
+    const { origin, step, range } = state.base;
+    const gx = Math.round((px - origin) / step);
+    const gy = Math.round((origin - py) / step);
+    const x = Math.max(-range, Math.min(range, gx));
+    const y = Math.max(-range, Math.min(range, gy));
+    return { x, y };
+  }
+  function pointScreen(p) {
+    const { origin, step } = state.base; return { sx: origin + p.x*step, sy: origin - p.y*step };
+  }
+
+  // ===== 렌더 =====
+  function render(curveA=null, confirmCurve=false) {
+    const base = state.base = drawCartesianPlane(canvas);
+    const { dpr } = base;
+
+    // 점
+    for (let i=0;i<state.points.length;i++) {
+      const p = state.points[i]; const {sx,sy} = pointScreen(p);
+      const isFlashing = state.flashActive && state.flashIndices.includes(i);
+      const ctx = base.ctx;
+      ctx.save();
+      if (isFlashing && state.flashBlink) { ctx.fillStyle = '#ef4444'; ctx.strokeStyle = '#ffffff'; }
+      else { ctx.fillStyle = '#111827'; ctx.strokeStyle = '#ffffff'; }
+      ctx.lineWidth = 2 / dpr;
+      ctx.beginPath(); ctx.arc(sx, sy, 6 * dpr, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+      ctx.restore();
+    }
+
+    if (curveA !== null) {
+      drawHyperbola(canvas, curveA, base, confirmCurve ? '#16a34a' : (getComputedStyle(document.documentElement).getPropertyValue('--line')||'#1d4ed8'));
+    }
+  }
+
+  function showToast(msg, kind='ok', ms=1200) {
+    const el = document.getElementById('toast');
+    el.textContent = msg; el.className='toast '+(kind==='ok'?'ok':'bad');
+    el.style.display='block';
+    setTimeout(()=>{ el.style.display='none'; }, ms);
+  }
+
+  function stopFlashingBadPoints() {
+    if (state.flashIntervalId) { clearInterval(state.flashIntervalId); state.flashIntervalId = null; }
+    if (state.flashTimeoutId)  { clearTimeout(state.flashTimeoutId);   state.flashTimeoutId  = null; }
+    state.flashActive = false; state.flashIndices = []; state.flashBlink = false;
+  }
+
+  function flashBadPoints(indices, durationMs = 3000, periodMs = 250) {
+    stopFlashingBadPoints();
+    if (!indices || indices.length === 0) return;
+    state.flashActive = true; state.flashIndices = indices.slice(); state.flashBlink = true;
+    state.flashIntervalId = setInterval(() => { state.flashBlink = !state.flashBlink; render(state.curveDrawn ? state.curveA : null); }, periodMs);
+    state.flashTimeoutId = setTimeout(() => { stopFlashingBadPoints(); render(state.curveDrawn ? state.curveA : null); }, durationMs);
+  }
+
+  // ===== 슬라이더 수식(캔버스 안) =====
+  const eqFormulaBox   = document.getElementById('eqFormula');
+  const eqFormulaInner = document.getElementById('eqFormulaInner');
+  let fixedFormulaScale = null;
+  const REFERENCE_TEX = 'y = \\frac{3.10}{x}';
+  let lastFormula = { active:false, a:0, where:null };
+
+  function latexForSlider(a){ return `y = \\frac{${formatA(a)}}{x}`; }
+  function rectFromAxes(xMin, xMax, yMin, yMax){
+    const { origin, step } = state.base || drawCartesianPlane(canvas);
+    const left   = origin + xMin * step;
+    const right  = origin + xMax * step;
+    const top    = origin - yMax * step;
+    const bottom = origin - yMin * step;
+    const width  = right - left;
+    const height = bottom - top;
+    return { left, top, width, height };
+  }
+  function showFormulaInRect(a, rect){
+    eqFormulaBox.style.left = rect.left + 'px';
+    eqFormulaBox.style.top  = rect.top  + 'px';
+    eqFormulaBox.style.width  = rect.width + 'px';
+    eqFormulaBox.style.height = rect.height + 'px';
+
+    eqFormulaInner.style.transform = 'scale(1)';
+    eqFormulaInner.style.fontSize = '64px';
+    eqFormulaInner.style.left = '0px';
+    eqFormulaInner.style.top  = '0px';
+
+    const boxW = rect.width, boxH = rect.height;
+    eqFormulaBox.style.display = 'block'; eqFormulaBox.style.visibility = 'hidden';
+
+    if (fixedFormulaScale === null) {
+      eqFormulaInner.innerHTML = '';
+      if (window.katex) window.katex.render(REFERENCE_TEX, eqFormulaInner, {throwOnError:false, displayMode:false, output:'html'});
+      const needW = Math.max(1, eqFormulaInner.offsetWidth);
+      const needH = Math.max(1, eqFormulaInner.offsetHeight);
+      fixedFormulaScale = Math.max(0.1, Math.min(boxW / needW, boxH / needH));
+    }
+
+    const tex = latexForSlider(a);
+    eqFormulaInner.innerHTML = '';
+    if (window.katex) window.katex.render(tex, eqFormulaInner, {throwOnError:false, displayMode:false, output:'html'});
+
+    eqFormulaInner.style.transform = `scale(${fixedFormulaScale})`;
+    const scaledW = eqFormulaInner.offsetWidth * fixedFormulaScale;
+    const scaledH = eqFormulaInner.offsetHeight * fixedFormulaScale;
+    eqFormulaInner.style.left = Math.max(0, (boxW - scaledW) / 2) + 'px';
+    eqFormulaInner.style.top  = Math.max(0, (boxH - scaledH) / 2) + 'px';
+
+    eqFormulaBox.style.visibility = 'visible'; eqFormulaBox.style.display = 'block';
+  }
+  function showFormula(a, where){
+    const rect = (where === 'pos') ? rectFromAxes(2, 8, -5, -2) : rectFromAxes(-8, -2, -5, -2);
+    showFormulaInRect(a, rect);
+    lastFormula.active = true; lastFormula.a = a; lastFormula.where = where;
+  }
+  function hideFormula(){ eqFormulaBox.style.display = 'none'; lastFormula.active = false; }
+
+  // ===== 탐색 모드 =====
+  function setRightPanel(html){ document.getElementById('rightPanel').innerHTML = html; }
+
+  function fitAndDraw(kRaw=null) {
+    state.base = drawCartesianPlane(canvas);
+    const kVal = parseK(kRaw);
+    if (kVal !== null) drawHyperbola(canvas, kVal, state.base);
+  }
+
+  function startExplore(){
+    resetAllTimers();
+    state.mode = 'idle';
+    setRightPanel(`
+      <h3>식</h3>
+      <div class="expr-row" id="exprRow">
+        <span class="expr-y">y</span>
+        <span class="expr-eq">=</span>
+        <div class="frac-ui">
+          <input id="kInput" class="num-input" type="text" inputmode="decimal" autocomplete="off" aria-label="분자 a 값" />
+          <div class="bar"></div>
+          <div class="denom">x</div>
+        </div>
+      </div>
+      <div class="hint">예) <b>4</b>, <b>-6</b>, <b>12</b> … 를 입력하면
+        <span id="exploreHintKatex"></span> 그래프가 그려져요.
+      </div>
+
+      <div class="slider-box">
+        <label><input type="checkbox" id="useSlider"> 슬라이더 사용</label>
+      </div>
+      <div id="sliderArea" style="display:none; margin-top:10px;">
+        <div style="margin-bottom:8px;">
+          a&gt;0:
+          <input type="range" min="0" max="10" step="0.01" value="0" id="posSlider" class="slider">
+          <span id="posVal">0</span>
+        </div>
+        <div>
+          a&lt;0:
+          <input type="range" min="-10" max="0" step="0.01" value="0" id="negSlider" class="slider">
+          <span id="negVal">0</span>
+        </div>
+      </div>
+    `);
+
+    // 힌트 수식
+    const h = document.getElementById('exploreHintKatex');
+    if (h && window.katex) { window.katex.render('y = \\frac{a}{x}', h, {throwOnError:false}); }
+
+    // 어디를 눌러도 인풋 포커스
+    document.getElementById('exprRow')?.addEventListener('click', () => document.getElementById('kInput')?.focus());
+
+    // 기본 미리보기
+    fitAndDraw(document.getElementById('kInput')?.value);
+
+    // 입력값 → 그래프
+    document.getElementById('kInput').addEventListener('input', (e)=>{
+      const useSlider = document.getElementById('useSlider').checked;
+      if (!useSlider) fitAndDraw(e.target.value);
+    });
+
+    // 슬라이더 체크
+    document.getElementById('useSlider').addEventListener('change', (e)=>{
+      document.getElementById('sliderArea').style.display = e.target.checked ? 'block' : 'none';
+      if (e.target.checked){
+        document.getElementById('posVal').textContent = '0';
+        document.getElementById('negVal').textContent = '0';
+        fitAndDraw(0);
+      } else {
+        const v = document.getElementById('kInput').value;
+        fitAndDraw(v);
+      }
+    });
+
+    // 슬라이더 step 동적
+    function adjustStep(slider) {
+      const val = Math.abs(parseFloat(slider.value));
+      slider.step = (val === 0 || val < 1) ? 0.01 : 0.1;
+    }
+    const posSlider = document.getElementById('posSlider');
+    const negSlider = document.getElementById('negSlider');
+
+    let posLive = false, negLive = false;
+    function updateFromSlider(kind, opts = {}) {
+      const use = document.getElementById('useSlider').checked;
+      const slider = (kind === 'pos') ? posSlider : negSlider;
+      adjustStep(slider);
+
+      const v = parseFloat(slider.value);
+      (kind === 'pos' ? document.getElementById('posVal') : document.getElementById('negVal')).textContent = isFinite(v) ? v.toFixed(2).replace(/\.?0+$/,'') : '0';
+
+      fitAndDraw(v);
+      if (use) showFormula(v, kind === 'pos' ? 'pos' : 'neg');
+
+      if (opts.markLive) { if (kind === 'pos') posLive = true; else negLive = true; }
+      if (opts.hideIfLive) {
+        const live = (kind === 'pos') ? posLive : negLive;
+        if (live) { hideFormula(); if (kind === 'pos') posLive = false; else negLive = false; }
+      }
+      if (opts.ephemeralIfNoLive) {
+        const live = (kind === 'pos') ? posLive : negLive;
+        if (!live && use) setTimeout(hideFormula, 800);
+        if (kind === 'pos') posLive = false; else negLive = false;
+      }
+    }
+
+    posSlider.addEventListener('input', () => updateFromSlider('pos', { markLive: true }));
+    negSlider.addEventListener('input', () => updateFromSlider('neg', { markLive: true }));
+    posSlider.addEventListener('pointerup', () => updateFromSlider('pos', { hideIfLive: true }));
+    negSlider.addEventListener('pointerup', () => updateFromSlider('neg', { hideIfLive: true }));
+    ['change', 'click', 'touchend'].forEach(ev => {
+      posSlider.addEventListener(ev, () => updateFromSlider('pos', { ephemeralIfNoLive: true }));
+      negSlider.addEventListener(ev, () => updateFromSlider('neg', { ephemeralIfNoLive: true }));
+    });
+
+    adjustStep(posSlider); adjustStep(negSlider);
+  }
+
+  // ===== 타이머 공용 =====
+  function updateHUD(){ const t = document.getElementById('timeLeft'); if (t) t.textContent = Math.max(0, Math.ceil(state.timeLeft)); const s = document.getElementById('scoreNow'); if (s) s.textContent = state.score; }
+  function startTimer(){
+    resetAllTimers();
+    state.timerId = setInterval(()=>{ state.timeLeft -= 1; updateHUD(); if (state.timeLeft <= 0){ state.timeLeft = 0; updateHUD(); resetAllTimers(); showCorrectFor5s(); } }, 1000);
+  }
+  function resetAllTimers(){ if (state.timerId){ clearInterval(state.timerId); state.timerId=null; } stopFlashingBadPoints(); }
+
+  // ===== 모드 전환 =====
+  const modes = document.getElementById('modeButtons');
+  modes.addEventListener('click', (e) => {
+    const btn = e.target.closest('.mode-btn'); if (!btn) return;
+    [...modes.querySelectorAll('.mode-btn')].forEach(b => b.classList.remove('active')); btn.classList.add('active');
+    const mode = btn.dataset.mode;
+    if (mode === 'eq-to-graph') startEqToGraph();
+    else if (mode === 'graph-to-eq') startGraphToEq();
+    else startExplore();
+  });
+
+  // ===== 모드1: 식→그래프 =====
+  function startEqToGraph() {
+    resetAllTimers(); state.mode='eq'; state.problemIndex=0; state.score=0; state._pendingNext = false;
+    setRightPanel(`
+      <h3>식을 그래프로 바꾸기</h3>
+      <div style="margin:12px 0 10px; font-size:16px;"><b>준비 됐나요?</b></div>
+      <div class="controls"><button id="eqReadyBtn" class="btn">네</button></div>
+      <div class="hint">버튼을 누르면 1번 문제가 시작되고 타이머가 돌아갑니다.</div>
+    `);
+    state.points = []; state.curveA = null; state.curveDrawn = false; render(null);
+  }
+
+  function nextProblemEq() {
+    if (state.problemIndex >= GAME_LEN) { return finishGame(); }
+    state.a = INV_COEFFS[Math.floor(Math.random()*INV_COEFFS.length)];
+    state.points = []; state.curveA = null; state.curveDrawn = false;
+
+    setEqPanelInGame(); render(null);
+    state.timeLeft = PER_PROBLEM_TIME; updateHUD(); startTimer();
+    document.getElementById('remainCount').textContent = String(GAME_LEN - state.problemIndex);
+    renderQuestionInv();
+  }
+
+  function setEqPanelInGame(showAfterConnect=false){
+    const controlsHtml = showAfterConnect ? `
+      <div class="controls">
+        <button id="eqCheckBtn" class="btn">정답 확인</button>
+        <button id="eqResetCurveBtn" class="btn ghost">점 다시 찍기</button>
+      </div>` : `
+      <div class="controls">
+        <button id="connectCurveBtn" class="btn">점들을 곡선으로 연결하기</button>
+      </div>`;
+    document.getElementById('rightPanel').innerHTML = `
+      <h3>식을 그래프로 바꾸기</h3>
+      <div class="statbar">
+        <div class="chip">남은 문제: <b id="remainCount">${GAME_LEN - state.problemIndex}</b> / ${GAME_LEN}</div>
+        <div class="chip">누적 점수: <b id="scoreNow">${state.score}</b></div>
+        <div class="chip">남은 시간: <b id="timeLeft">${PER_PROBLEM_TIME}</b>s</div>
+      </div>
+      <div id="question" style="margin:8px 0 6px; font-size:16px;">
+        <b>문제:</b> <span id="qMath"></span> 의 그래프를 왼쪽 좌표평면에 그려주세요.
+      </div>
+      <div class="hint">점들을 찍은 뒤 “점들을 곡선으로 연결하기”를 누르세요. (최대 12개까지 찍을 수 있어요)</div>
+      ${controlsHtml}`;
+  }
+
+  function showCorrectFor5s(){
+    if (state._pendingNext) return; state._pendingNext = true;
+    render(state.a, true);
+    showToast('시간 종료! 정답 그래프를 5초간 보여줍니다.', 'bad', 1500);
+    setTimeout(()=>{ state.problemIndex++; state._pendingNext = false; nextProblemEq(); }, 5000);
+  }
+
+  function finishGame(){
+    resetAllTimers();
+    setRightPanel(`
+      <h3>결과</h3>
+      <p style="font-size:16px;">최종 점수: <b>${state.score}</b>점</p>
+      <div class="controls"><button id="restartBtn" class="btn">다시 하기</button></div>
+    `);
+    document.getElementById('restartBtn').addEventListener('click', ()=> startEqToGraph());
+    render(null);
+  }
+
+  // 식→그래프 상호작용
+  let draggingIndex = -1, dragStart = null, hasDragged = false;
+
+  canvas.addEventListener('pointerdown', (e)=>{
+    if (state.mode !== 'eq') return;
+    try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+    const {x,y} = toCanvasXY(e);
+    const hitIndex = hitTestPoint(x,y);
+
+    if (hitIndex>=0){ draggingIndex = hitIndex; dragStart = { x, y }; hasDragged = false; return; }
+
+    if (state.points.length < 12){
+      const g = snapToGrid(x,y);
+      if (Number.isInteger(g.x) && Number.isInteger(g.y) && !(g.x===0 && g.y===0)){
+        state.points.push({x:g.x, y:g.y}); render(state.curveDrawn ? state.curveA : null);
+      }
+    }
+  });
+
+  canvas.addEventListener('pointermove', (e)=>{
+    if (state.mode !== 'eq') return;
+    if (draggingIndex<0) return;
+    const {x,y} = toCanvasXY(e);
+    const g = snapToGrid(x,y);
+    const pt = state.points[draggingIndex];
+    if (pt.x !== g.x || pt.y !== g.y) { hasDragged = true; }
+    pt.x = g.x; pt.y = g.y; render(state.curveDrawn ? state.curveA : null);
+  });
+
+  window.addEventListener('pointerup', (e)=>{
+    try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+    if (state.mode !== 'eq') return;
+    if (draggingIndex >= 0) {
+      const canDelete = (hasDragged === false);
+      if (canDelete) { state.points.splice(draggingIndex, 1); render(state.curveDrawn ? state.curveA : null); }
+    }
+    draggingIndex = -1; dragStart = null; hasDragged = false;
+  });
+
+  function hitTestPoint(px,py){
+    const r = 10 * (state.base?.dpr || 1);
+    for (let i=0;i<state.points.length;i++){
+      const {sx,sy} = pointScreen(state.points[i]);
+      const dx = (px - sx), dy = (py - sy);
+      if (dx*dx + dy*dy <= r*r) return i;
+    }
+    return -1;
+  }
+
+  // 연결 로직
+  function onCurve(p, a, eps=1e-6) { if (p.x === 0) return false; const y = a / p.x; return Math.abs(p.y - y) < eps; }
+  function countMatches(a){ let c=0; for (const p of state.points) if (onCurve(p,a)) c++; return c; }
+
+  function connectPointsToCurve(){
+    let bestA = null, bestCount = -1;
+    for (const a of INV_COEFFS) { const c = countMatches(a); if (c > bestCount) { bestCount = c; bestA = a; } }
+    if (bestCount < CONNECT_MIN_MATCH) {
+      state.curveA = null; state.curveDrawn=false; showToast('점을 잘못 찍었어요. 식을 다시 한 번 확인해주세요.', 'bad', 2200); render(null); return false;
+    }
+    state.curveA = bestA; state.curveDrawn = true; render(state.curveA);
+
+    const bad = []; for (let i=0;i<state.points.length;i++){ if (!onCurve(state.points[i], state.curveA)) bad.push(i); }
+    if (bad.length>0){ flashBadPoints(bad, 3000, 250); setTimeout(()=>{ showToast('이 점들은 그래프 위에 있지 않아요. 점의 위치를 조정해주세요.', 'bad', 2000); }, 3000); }
+    return true;
+  }
+
+  // 정수 격자점(±9)
+  function requiredIntegerPoints(a){
+    const req = [];
+    for (let x=-9; x<=9; x++){
+      if (x===0) continue;
+      const y = a / x;
+      if (Number.isInteger(y) && y>=-9 && y<=9) req.push({x, y});
+    }
+    const key = (p)=>`${p.x},${p.y}`; const seen = new Set(); const out = [];
+    for (const p of req){ const k=key(p); if(!seen.has(k)){ seen.add(k); out.push(p);} }
+    return out;
+  }
+  function hasPoint(points, target){ return points.some(p => p.x===target.x && p.y===target.y); }
+
+  function checkEqAnswer(){
+    if (!state.curveDrawn || state.curveA === null) return;
+
+    const need = requiredIntegerPoints(state.curveA);
+    const missing = need.filter(pt => !hasPoint(state.points, pt));
+    if (missing.length > 0){
+      state.timeLeft = Math.max(0, state.timeLeft - 5); updateHUD();
+      showToast(`아직 덜 찍은 정수 격자점이 ${missing.length}개 있어요.`, 'bad', 2500);
+      setTimeout(()=>{ state.curveA = null; state.curveDrawn = false; setEqPanelInGame(false); render(null); renderQuestionInv(); }, 3000);
+      return;
+    }
+    if (Math.abs(state.curveA - state.a) > 1e-9){
+      state.timeLeft = Math.max(0, state.timeLeft - 5); updateHUD();
+      showToast('그래프는 잘 그렸지만, 정답은 아니에요.', 'bad', 2200);
+      setTimeout(()=>{ state.curveA = null; state.curveDrawn = false; setEqPanelInGame(false); render(null); renderQuestionInv(); }, 3000);
+      return;
+    }
+    const add = Math.max(0, Math.ceil(state.timeLeft));
+    state.score += add; updateHUD();
+    showToast(`정답! +${add}점`, 'ok', 1200);
+    state.problemIndex++; nextProblemEq();
+  }
+
+  // ===== 모드2: 그래프→식 =====
+  function startGraphToEq(){
+    resetAllTimers(); state.mode = 'graph'; state.problemIndex = 0; state.score = 0; state._pendingNext = false;
+    setRightPanel(`
+      <h3>그래프를 식으로 바꾸기</h3>
+      <div style="margin:12px 0 10px; font-size:16px;"><b>준비 됐나요?</b></div>
+      <div class="controls"><button id="gReadyBtn" class="btn">네</button></div>
+      <div class="hint">버튼을 누르면 1번 문제가 시작되고 타이머가 돌아갑니다.</div>
+    `);
+    state.points = []; state.curveA = null; state.curveDrawn = false; render(null);
+  }
+
+  function nextProblemGraph() {
+    if (state.problemIndex >= GRAPH_GAME_LEN) { return finishGraphGame(); }
+    state.a = GRAPH_COEFFS[Math.floor(Math.random()*GRAPH_COEFFS.length)];
+
+    setRightPanel(`
+      <h3>그래프를 식으로 바꾸기</h3>
+      <div class="statbar">
+        <div class="chip">남은 문제: <b id="gRemain">${GRAPH_GAME_LEN - state.problemIndex}</b> / ${GRAPH_GAME_LEN}</div>
+        <div class="chip">누적 점수: <b id="scoreNow">${state.score}</b></div>
+        <div class="chip">남은 시간: <b id="timeLeft">${GRAPH_PER_PROBLEM_TIME}</b>s</div>
+      </div>
+      <div class="hint">왼쪽 곡선은 <span id="gHintKatex"></span> 입니다. 분자 a 값을 입력하세요.</div>
+
+ <div class="expr-row" id="gExprRow">
+    <span class="expr-y">y</span>
+    <span class="expr-eq">=</span>
+    <div class="frac-ui">
+      <input id="gInput" class="num-input" type="text"
+             inputmode="decimal" autocomplete="off" aria-label="분자 a 값" />
+      <div class="bar"></div>
+      <div class="denom">x</div>
+    </div>
+  </div>
+  <div class="controls" style="margin-top:10px;">
+    <button id="gCheckBtn" class="btn">확인</button>
+  </div>
+    `);
+
+ 
+    const gh = document.getElementById('gHintKatex');
+    if (gh && window.katex) { window.katex.render('y = \\frac{a}{x}', gh, {throwOnError:false}); }
+
+    render(state.a);
+    state.timeLeft = GRAPH_PER_PROBLEM_TIME; updateHUD(); startTimerGraph();
+
+    document.getElementById('gInput').addEventListener('input', (e)=>{
+      const v = parseK(e.target.value); 
+    });
+  }
+
+  function renderGMathLive(val){
+    const el = document.getElementById('gMathLive');
+    const tex = (val===null)? 'y = \\frac{\\square}{x}' : latexForInv(val);
+    if (window.katex){ el.innerHTML = ''; window.katex.render(tex, el, {throwOnError:false, displayMode:false, output:'html'}); }
+    else { el.textContent = (val===null) ? 'y = [ ] / x' : `y = ${formatA(val)}/x`; }
+  }
+
+  function startTimerGraph(){
+    resetAllTimers();
+    state.timerId = setInterval(()=>{ state.timeLeft -= 1; updateHUD(); if (state.timeLeft <= 0){ state.timeLeft = 0; updateHUD(); resetAllTimers(); showCorrectFor5sGraph(); } }, 1000);
+  }
+  function showCorrectFor5sGraph(){
+    if (state._pendingNext) return; state._pendingNext = true;
+    showToast('시간 종료! 5초 후 다음 문제로 넘어갑니다.', 'bad', 2000);
+    setTimeout(()=>{ state.problemIndex++; state._pendingNext = false; nextProblemGraph(); }, 5000);
+  }
+  function finishGraphGame(){
+    resetAllTimers();
+    setRightPanel(`
+      <h3>결과</h3>
+      <p style="font-size:16px;">최종 점수: <b>${state.score}</b>점</p>
+      <div class="controls"><button id="gRestartBtn" class="btn">다시 하기</button></div>
+    `);
+    document.getElementById('gRestartBtn').addEventListener('click', ()=> startGraphToEq());
+    render(null);
+  }
+
+  // ===== 전역 클릭 =====
+  document.addEventListener('click', (e)=>{
+    const id = e.target && e.target.id;
+
+    if (id === 'eqReadyBtn') { setEqPanelInGame(false); nextProblemEq(); return; }
+    if (id === 'connectCurveBtn'){ const ok = connectPointsToCurve(); if (ok){ setEqPanelInGame(true); renderQuestionInv(); } return; }
+    if (id === 'eqCheckBtn'){ checkEqAnswer(); return; }
+    if (id === 'eqResetCurveBtn'){ state.curveA = null; state.curveDrawn = false; setEqPanelInGame(false); render(null); renderQuestionInv(); return; }
+
+    if (id === 'gReadyBtn') { nextProblemGraph(); return; }
+    if (id === 'gCheckBtn') {
+      const raw = (document.getElementById('gInput')?.value ?? '').trim();
+      const val = parseK(raw);
+      if (val === null) { showToast('숫자 형식으로 입력해주세요. 예) 4, -6, 12', 'bad', 2500); return; }
+      const eps = 1e-9;
+      if (Math.abs(val - state.a) < eps) {
+        const add = Math.max(0, Math.ceil(state.timeLeft)); state.score += add; updateHUD();
+        showToast(`정답! +${add}점`, 'ok', 1200);
+        state.problemIndex++; nextProblemGraph();
+      } else {
+        state.timeLeft = Math.max(0, state.timeLeft - 10);
+        if (state.timeLeft <= 0){ state.timeLeft = 0; updateHUD(); resetAllTimers(); showCorrectFor5sGraph(); }
+        else { updateHUD(); showToast('오답! 남은 시간 -10초. 다시 시도해 보세요.', 'bad', 3000); }
+      }
+      return;
+    }
+  });
+
+  // ===== 초기 바인딩 =====
+  window.addEventListener('resize', ()=>{
+    if (state.mode==='idle'){
+      fitAndDraw(document.getElementById('kInput')?.value);
+    } else {
+      render(state.curveDrawn ? state.curveA : (state.mode==='graph' ? state.a : null));
+    }
+    fixedFormulaScale = null;
+    if (lastFormula.active) showFormula(lastFormula.a, lastFormula.where);
+  });
+
+  window.addEventListener('DOMContentLoaded', ()=>{
+    startExplore();
+    document.addEventListener('input', (e)=>{
+      if (state.mode!=='idle') return;
+      if (e.target && e.target.id === 'kInput'){
+        const useSlider = document.getElementById('useSlider')?.checked;
+        if (!useSlider) fitAndDraw(e.target.value);
+      }
+    });
+  });
+  </script>
+</body>
+</html>
